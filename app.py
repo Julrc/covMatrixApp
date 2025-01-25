@@ -109,7 +109,7 @@ def load_pretrained_model(weights_path, input_size, n_assets, n_factors, hidden_
 
 def plot_heatmap(matrix, labels, title):
     plt.figure(figsize=(10, 8))
-    sns.heatmap(matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap='coolwarm')
+    sns.heatmap(matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap='RDBu_r')
     plt.title(title)
     plt.xticks(rotation=45, ha='right')
     plt.yticks(rotation=0)
@@ -305,9 +305,6 @@ def main():
             Sigma_pred = model(X_infer.to(DEVICE))  # (1, n_assets, n_assets)
         Sigma_np = Sigma_pred[0].cpu().numpy()
 
-        st.write("**Predicted Covariance Matrix**:")
-        plot_heatmap(Sigma_np, tickers, "Predicted Covariance")
-
         # Correlation
         diag_std = np.sqrt(np.diag(Sigma_np))
         diag_std[diag_std <= 1e-12] = 1e-12
@@ -335,9 +332,6 @@ def main():
         )
 
         for day_idx, (Sigma_np, corr_matrix) in enumerate(results, start=1):
-            st.write(f"### Day {day_idx} Prediction")
-            st.write("**Covariance Matrix**")
-            plot_heatmap(Sigma_np, tickers, f"Day {day_idx} Covariance")
 
             st.write("**Correlation Matrix**")
             plot_heatmap(corr_matrix, tickers, f"Day {day_idx} Correlation")
