@@ -109,7 +109,7 @@ def load_pretrained_model(weights_path, input_size, n_assets, n_factors, hidden_
 
 def plot_heatmap(matrix, labels, title):
     plt.figure(figsize=(10, 8))
-    sns.heatmap(matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap='RDBu_r')
+    sns.heatmap(matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap='viridis')
     plt.title(title)
     plt.xticks(rotation=45, ha='right')
     plt.yticks(rotation=0)
