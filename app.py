@@ -141,6 +141,103 @@ def df_to_tensor(df_window):
     X_tensor = torch.tensor(window_data, dtype=torch.float32).unsqueeze(0)
     return X_tensor
 
+def min_var_portfolio(cov_matrix):
+    """
+    Solve for ht eminimum variance portfolio subject to sum of weights = 1.
+    No short-sale constraints here (weights can be negative)
+
+    min w^T Sigma w, subject to sum(w) = 1
+
+    cov_matrix: shape (n_assets, n_assets)
+    returns: (n_assets,) weight vector
+    """
+
+    n_assets = cov_matrix.shape[0]
+    # Covariance might be signular or ill-conditioned, so add a small ridge
+    cov_matrix += np.eye(n_assets) * 1e-6
+
+    # We can solve with the formula for unconstrained min-var with sum(w)=1:
+    # w* (Sigma^-1 * u) / (u^T Sigma^-1 u), where u is a vector of ones
+    inv_cov = np.linalg.inv(cov_matrix)
+    ones = np.ones(n_assets)
+    numerator = inv_cov @ ones
+    denom = ones @ numerator
+    w = numerator / denom
+    return w
+
+def walk_forward_compare(model, df_features, df_returns, tickers, input_window):
+    """
+    Walk-forward:
+    - For each day i from [input_window ..end-1], use [i-input_window ..i-1] as window
+    to estimate covariances:
+    1. Rollingcov (Direct from np.cov)
+    2. Factor Cov (our LSTM model)
+    - Then build min-var portfolio for each approach
+    -Evaluate PnL on day i
+    Returns a DataFrame with daily PnL
+    """
+    results = []
+    all_dates = df_features.index
+    n_assets = len(tickers)
+
+    for i in range(input_window, len(df_features) - 1):
+        # We'll predict for day i, then realize the returns on day i + 1
+        window_start = i - input_window
+        window_end = i
+
+        # 1) Build rolling cov
+        # For rolling-sample cov, just use the raw returns from df_returns
+        # (The last input_window days)
+        rolling_window = df_returns.iloc[window_start:window_end].values
+        roll_cov = np.cov(rolling_window.T, ddof=1) # Shape (n_assets, n_assets)
+
+        # 2) Build Factor Cov
+        factor_window = df_features.iloc[window_start:window_end]
+        X_infer = df_to_tensor(factor_window).to(DEVICE)
+
+        with torch.no_grad():
+            Sigma_pred = model(X_infer) # (1, n_assets, n_assets)
+        Sigma_np = Sigma_pred[0].cpu().numpy()
+
+        # 3) Compute min-var portfolios
+
+        w_roll = min_var_portfolio(roll_cov)
+        w_factor = min_var_portfolio(Sigma_np)
+        
+        # 4) Next day's realized return
+        next_day_idx = i # Day i+1 in terms of zero-based index inside df_returns
+        next_day_rets = df_returns.iloc[next_day_idx].values # shape (n_assets,)
+
+        pnl_roll = np.dot(w_roll, next_day_rets)
+        pnl_factor = np.dot(w_factor, next_day_rets)
+
+        results.append({
+            "date": all_dates[next_day_idx],
+            "pnl_rolling": pnl_roll,
+            "pnl_factor": pnl_factor
+        })
+
+    return pd.DataFrame(results)
+
+def plot_cumulative_returns(df_pnl):
+    """
+    df_pnl has columns ["data", "pnl_rolling", "pnl_factor"]
+    Plot the cumulative sum of each strategy
+    """
+
+    df_pnl = df_pnl.copy()
+    df_pnl["cum_roll"] = df_pnl["pnl_rolling"].cumsum()
+    df_pnl["cum_factor"] = df_pnl["pnl_factor"].cumsum()
+
+    plt.figure(figsize=(10,6))
+    plt.plot(df_pnl["date"], df_pnl["cum_roll"], label="Rolling Cov")
+    plt.plot(df_pnl["date"], df_pnl["cum_factor"], label="Factor Cov")
+    plt.title("Cumulative Returns Comparison")
+    plt.legend()
+    plt.xticks(rotation=45, ha='right')
+    st.pyplot(plt)
+    plt.close()
+
 
 def walk_forward_covariance(model, df_features, tickers):
     """
@@ -270,27 +367,6 @@ def main():
         st.error("Feature dimension mismatch. Check rolling-vol logic and input_size.")
         st.stop()
 
-    # 5) Single-day prediction
-    st.subheader("Predict Next Day Covariance")
-    if st.button("Predict Covariance (Single Day)"):
-        with torch.no_grad():
-            Sigma_pred = model(X_infer.to(DEVICE))  # (1, n_assets, n_assets)
-        Sigma_np = Sigma_pred[0].cpu().numpy()
-
-        # Correlation
-        diag_std = np.sqrt(np.diag(Sigma_np))
-        diag_std[diag_std <= 1e-12] = 1e-12
-        outer_std = np.outer(diag_std, diag_std)
-        corr_matrix = Sigma_np / outer_std
-
-        st.write("**Predicted Covariance Matrix**:")
-        plot_heatmap(Sigma_np, tickers, "Predicted Covariance")
-
-        st.write("**Predicted Correlation Matrix**:")
-        plot_heatmap(corr_matrix, tickers, "Predicted Correlation")
-
-        st.success("Single-day inference complete!")
-
     st.subheader("Run Walk-Forward Covariance")
 
     if st.button("Compute Covariances:"):
@@ -306,6 +382,34 @@ def main():
             corr_matrix = last_day_result["Corr"]
             plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
 
+    
+    st.subheader("Run Backtest and Compare Factor Cov vs. Rolling Cov")
+
+    if st.button("Run Backtest"):
+        df_pnl = walk_forward_compare(
+            model=model,
+            df_features=df_features_full,
+            df_returns=df_returns,
+            tickers=tickers,
+            input_window=INPUT_WINDOW
+        )
+
+        st.write("Backtest results (first 5 rows):")
+        st.write(df_pnl.head())
+
+        plot_cumulative_returns(df_pnl)
+
+        final_roll = df_pnl["pnl_rolling"].sum()
+        final_factor= df_pnl["pnl_factor"].sum()
+
+        st.write("**Total PNL - Rolling Cov**", round(final_roll, 4))
+        st.write("**Total PNL - Factor Cov**", round(final_factor, 4))
+
+        # Possibly compute sharpe, etc.
+        st.write("**Rolling Cov Sharpe**:",
+            round(df_pnl["pnl_rolling"].mean() / df_pnl["pnl_rolling"].std(), 3))
+        st.write("**Factor Cov SHarpe:**",
+            round(df_pnl["pnl_factor"].mean() / df_pnl["pnl_factor"].std(), 3))
 
 
 if __name__ == "__main__":
