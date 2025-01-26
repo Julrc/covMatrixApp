@@ -163,12 +163,18 @@ def predict_multiple_days(
     model.eval()
 
     for day in range(1, num_days + 1):
+
+        st.write(f"Day {day} input window:\n", df_window)
+
         # 1) Build input tensor
         X_infer = df_to_tensor(df_window).to(DEVICE)
 
         with torch.no_grad():
             Sigma_pred = model(X_infer)  # shape: (1, n_assets, n_assets)
         Sigma_np = Sigma_pred[0].cpu().numpy()
+
+        # Print raw matrices to confirm they're changing
+        st.write(f"Day {day} Sigma matrix:\n", Sigma_pred[0].cpu().numpy())
 
         # 2) Compute correlation from Sigma
         diag_std = np.sqrt(np.diag(Sigma_np))
