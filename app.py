@@ -163,6 +163,10 @@ def predict_multiple_days(
     model.eval()
 
     for day in range(1, num_days + 1):
+        
+        st.write(f"Day {day} Input Window Shape: {df_window.shape}")
+        st.write(f"Day {day} Input Window Volatility:\n", 
+        df_window[[col for col in df_window.columns if '_vol' in col]].tail())
 
         st.write(f"Day {day} input window:\n", df_window)
 
