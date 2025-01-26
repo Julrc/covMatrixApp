@@ -188,6 +188,7 @@ def predict_multiple_days(
 
         # 4) Update df_window: drop oldest row, append new row
 
+        df_returns_part = df_window[tickers].copy().iloc[1:]
         last_date = df_returns_part.index[-1]
         new_idx = last_date + pd.Timedelta(days=1)
 
