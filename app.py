@@ -141,93 +141,45 @@ def df_to_tensor(df_window):
     X_tensor = torch.tensor(window_data, dtype=torch.float32).unsqueeze(0)
     return X_tensor
 
-def predict_multiple_days(
-    model, df_window, tickers, num_days, 
-    input_window, vol_window, add_rolling_vol
-):
+
+def walk_forward_covariance(model, df_features, tickers):
     """
-    Iteratively predict covariance matrices for the next `num_days`.
-    - df_window: a DataFrame of shape (INPUT_WINDOW, num_features) with the *most recent* window.
-    - Each iteration:
-        1. Build input tensor from df_window
-        2. Predict covariance matrix (Sigma)
-        3. Generate synthetic returns from N(0, Sigma)
-        4. Append the synthetic returns to df_window (drop oldest row)
-        5. Recompute rolling volatility if needed
-        6. Store the predicted Sigma
-    
-    Returns: list of (Sigma_np, corr_matrix_np)
+    For each day i from input_window to the endo f df_features
+    Use the last input_window rows up to day i-1
+    Predict covariacne for day i
+    Compare or store it
     """
     results = []
+    all_dates = df_features.index
     n_assets = len(tickers)
-    model.eval()
 
-    for day in range(1, num_days + 1):
-        
-        st.write(f"Day {day} Input Window Shape: {df_window.shape}")
-        st.write(f"Day {day} Input Window Volatility:\n", 
-        df_window[[col for col in df_window.columns if '_vol' in col]].tail())
+    # Start from day=INPUT_WINDOW, so we have enough past data
+    for i in range(INPUT_WINDOW, len(df_features)):
+        # The window of hte previous Input_window days
+        window_end_idx = i
+        window_start_idx = i - INPUT_WINDOW
+        df_window = df_features.iloc[window_start_idx:window_end_idx]
 
-        st.write(f"Day {day} input window:\n", df_window)
-
-        # 1) Build input tensor
+        # Build input tensor
         X_infer = df_to_tensor(df_window).to(DEVICE)
 
         with torch.no_grad():
-            Sigma_pred = model(X_infer)  # shape: (1, n_assets, n_assets)
+            Sigma_pred = model(X_infer)
         Sigma_np = Sigma_pred[0].cpu().numpy()
 
-        # Print raw matrices to confirm they're changing
-        st.write(f"Day {day} Sigma matrix:\n", Sigma_pred[0].cpu().numpy())
-
-        # 2) Compute correlation from Sigma
+        # Turn into correlation matrix
         diag_std = np.sqrt(np.diag(Sigma_np))
-        # Guard against zero or negative diagonal
-        diag_std[diag_std <= 1e-12] = 1e-12
+        diag_std[diag_std <=1e-12] = 1e-12
         outer_std = np.outer(diag_std, diag_std)
         corr_matrix = Sigma_np / outer_std
 
-        # Store result
-        results.append((Sigma_np, corr_matrix))
-        noise_scale = 0.01 * day
-
-        # 3) Generate synthetic returns from N(0, Sigma_pred)
-        synthetic_returns = np.random.multivariate_normal(
-            mean=np.zeros(n_assets), cov=Sigma_np
-        ) + np.random.normal(0, noise_scale, n_assets)
-
-        synthetic_returns = pd.Series(synthetic_returns, index=tickers)
-
-        # 4) Update df_window: drop oldest row, append new row
-
-        df_returns_part = df_window[tickers].copy().iloc[1:]
-        last_date = df_returns_part.index[-1]
-        new_idx = last_date + pd.Timedelta(days=1)
-
-        df_returns_part.loc[new_idx] = synthetic_returns
-        df_returns_part = df_returns_part.sort_index()
-
-
-
-
-        # 5) Recompute rolling vol if needed
-        if add_rolling_vol:
-            # We have the last input_window-1 real rows plus 1 new synthetic row
-            # Compute rolling vol over VOL_WINDOW, but we only have input_window rows in memory.
-            # If input_window == vol_window, that’s easy; or you can store more history externally.
-            df_vol_part = df_returns_part.rolling(vol_window).std().fillna(0.0)
-            vol_cols = [f"{col}_vol" for col in tickers]
-            df_vol_part.columns = vol_cols
-
-            df_features_part = pd.concat([df_returns_part, df_vol_part], axis=1)
-        else:
-            df_features_part = df_returns_part
-
-        # Now df_features_part should have exactly INPUT_WINDOW rows again
-        if len(df_features_part) > input_window:
-            df_features_part = df_features_part.iloc[-input_window:]
-
-        df_window = df_features_part  # update for next iteration
+        # Store results
+        pred_date = all_dates[i] # This is the current day 
+        results.append({
+            "date": pred_date,
+            "Sigma":Sigma_np,
+            "Corr":corr_matrix
+        })
 
     return results
 
@@ -245,7 +197,7 @@ def main():
 
     # 2) Download data, handle missing tickers
     end_date = None
-    start_date = "2020-01-01"
+    start_date = "2000-01-01"
     st.write(f"Downloading data from {start_date} to {end_date} ...")
 
     try:
@@ -331,32 +283,30 @@ def main():
         outer_std = np.outer(diag_std, diag_std)
         corr_matrix = Sigma_np / outer_std
 
+        st.write("**Predicted Covariance Matrix**:")
+        plot_heatmap(Sigma_np, tickers, "Predicted Covariance")
+
         st.write("**Predicted Correlation Matrix**:")
         plot_heatmap(corr_matrix, tickers, "Predicted Correlation")
 
         st.success("Single-day inference complete!")
 
-    # 6) Multi-day forecast
-    st.subheader("Predict Multiple Days")
-    num_days = st.slider("Select number of days to predict", min_value=1, max_value=30, value=5)
+    st.subheader("Run Walk-Forward Covariance")
 
-    if st.button(f"Predict Covariance for Next {num_days} Days"):
-        results = predict_multiple_days(
-            model=model,
-            df_window=df_window,          # last 40 days
-            tickers=tickers,
-            num_days=num_days,
-            input_window=INPUT_WINDOW,
-            vol_window=VOL_WINDOW,
-            add_rolling_vol=ADD_ROLLING_VOL_FEATURE
-        )
+    if st.button("Compute Covariances:"):
+        # We'll do a simple walk-forward from day INPUT_WINDOW
+        results = walk_forward_covariance(model, df_features_full, tickers)
 
-        for day_idx, (Sigma_np, corr_matrix) in enumerate(results, start=1):
+        st.write(f"Computed walk-forward covariance for {len(results)} days.")
 
-            st.write("**Correlation Matrix**")
-            plot_heatmap(corr_matrix, tickers, f"Day {day_idx} Correlation")
+        if results:
+            last_day_result = results[-1]
+            st.write(f"Latest Predicted covariance** (Date: {last_day_result['date']})")
+            # Plot correlation
+            corr_matrix = last_day_result["Corr"]
+            plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
 
-        st.success(f"Multi-day inference ({num_days} days) complete!")
+
 
 if __name__ == "__main__":
     main()
