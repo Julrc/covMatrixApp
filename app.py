@@ -124,7 +124,7 @@ def build_feature_window(df_returns, add_rolling_vol, vol_window):
       - columns = returns + rolling_vol
     """
     if add_rolling_vol:
-        df_vol = df_returns.rolling(vol_window).std().fillna(0.0)
+        df_vol = df_returns.rolling(window=vol_window, min_periods=1).std().fillna(0.0)
         vol_cols = [f"{col}_vol" for col in df_vol.columns]
         df_vol.columns = vol_cols
         df_features = pd.concat([df_returns, df_vol], axis=1)
