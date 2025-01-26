@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 # 1. Global Settings
 # ------------------------------
 INPUT_WINDOW = 40
-ADD_ROLLING_VOL_FEATURE = False
-VOL_WINDOW = 40
+ADD_ROLLING_VOL_FEATURE = True
+VOL_WINDOW = 10
 N_FACTORS = 2
 HIDDEN_SIZE = 128
 NUM_LAYERS = 2
