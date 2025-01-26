@@ -179,11 +179,13 @@ def predict_multiple_days(
 
         # Store result
         results.append((Sigma_np, corr_matrix))
+        noise_scale = 0.01 * day
 
         # 3) Generate synthetic returns from N(0, Sigma_pred)
         synthetic_returns = np.random.multivariate_normal(
             mean=np.zeros(n_assets), cov=Sigma_np
-        )
+        ) + np.random.normal(0, noise_scale, n_assets)
+
         synthetic_returns = pd.Series(synthetic_returns, index=tickers)
 
         # 4) Update df_window: drop oldest row, append new row
@@ -216,9 +218,6 @@ def predict_multiple_days(
             df_features_part = df_features_part.iloc[-input_window:]
 
         df_window = df_features_part  # update for next iteration
-
-        st.write("Day", day, "new row of returns:\n", synthetic_returns)
-        st.write("Rolling std tail:\n", df_vol_part.tail())
 
     return results
 
