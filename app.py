@@ -217,8 +217,8 @@ def predict_multiple_days(
 
         df_window = df_features_part  # update for next iteration
 
-        print("Day", day, "new row of returns:\n", synthetic_returns)
-        print("Rolling std tail:\n", df_vol_part.tail())
+        st.write("Day", day, "new row of returns:\n", synthetic_returns)
+        st.write("Rolling std tail:\n", df_vol_part.tail())
 
     return results
 
