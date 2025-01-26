@@ -188,7 +188,8 @@ def predict_multiple_days(
 
         # 4) Update df_window: drop oldest row, append new row
         df_returns_part = df_window[tickers].copy().iloc[1:]  # drop oldest
-        df_returns_part.loc[df_returns_part.index[-1] + pd.Timedelta(days=1)] = synthetic_returns
+        new_idx = df_returns_part.index[-1] + 1
+        df_returns_part.loc[new_idx] = synthetic_returns.values
         df_returns_part = df_returns_part.sort_index()
 
         # 5) Recompute rolling vol if needed
