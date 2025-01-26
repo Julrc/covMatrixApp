@@ -195,6 +195,10 @@ def predict_multiple_days(
         df_returns_part.loc[new_idx] = synthetic_returns
         df_returns_part = df_returns_part.sort_index()
 
+        print("Day", day, "new row of returns:\n", synthetic_returns)
+        print("Rolling std tail:\n", df_vol_part.tail())
+
+
         # 5) Recompute rolling vol if needed
         if add_rolling_vol:
             # We have the last input_window-1 real rows plus 1 new synthetic row
