@@ -180,7 +180,9 @@ def walk_forward_compare(model, df_features, df_returns, tickers, input_window):
     all_dates = df_features.index
     n_assets = len(tickers)
 
-    for i in range(input_window, len(df_features) - 1):
+    start_idx = input_window
+
+    for i in range(start_idx, len(df_features) - 1):
         # We'll predict for day i, then realize the returns on day i + 1
         window_start = i - input_window
         window_end = i
@@ -205,14 +207,14 @@ def walk_forward_compare(model, df_features, df_returns, tickers, input_window):
         w_factor = min_var_portfolio(Sigma_np)
         
         # 4) Next day's realized return
-        next_day_idx = i # Day i+1 in terms of zero-based index inside df_returns
-        next_day_rets = df_returns.iloc[next_day_idx].values # shape (n_assets,)
+        #next_day_idx = i # Day i+1 in terms of zero-based index inside df_returns
+        next_day_rets = df_returns.iloc[i].values # shape (n_assets,)
 
         pnl_roll = np.dot(w_roll, next_day_rets)
         pnl_factor = np.dot(w_factor, next_day_rets)
 
         results.append({
-            "date": all_dates[next_day_idx],
+            "date": all_dates[i],
             "pnl_rolling": pnl_roll,
             "pnl_factor": pnl_factor
         })
@@ -280,6 +282,13 @@ def walk_forward_covariance(model, df_features, tickers):
 
     return results
 
+def split_train_test(df, test_size=0.15):
+    n_test = int(len(df) * test_size)
+    df_train = df.iloc[:-n_test]
+    df_test = df.iloc[-n_test:o]
+    
+    return df_train, df_test
+
 # ------------------------------
 # 4. Streamlit App
 # ------------------------------
@@ -326,9 +335,11 @@ def main():
         df_returns = df_data.pct_change().dropna()
         st.write("Data shape (daily returns):", df_returns.shape)
 
-        test_set = df_returns.shape[0]
-        test_percentage = 0.15
-        test_dates = int(np.round(test_set * test_percentage))
+        df_train, df_test = split_train_test(df_returns, test_size=0.15)
+
+        df_features_train = build_feature_window(df_train, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+        df_features_test = build_feature_window(df_test, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+        
 
     except Exception as e:
         st.error(f"Error downloading data: {e}")
@@ -392,8 +403,8 @@ def main():
     if st.button("Run Backtest"):
         df_pnl = walk_forward_compare(
             model=model,
-            df_features=df_features_full,
-            df_returns=df_returns,
+            df_features=df_features_test,
+            df_returns=df_test,
             tickers=tickers,
             input_window=INPUT_WINDOW
         )
@@ -401,12 +412,7 @@ def main():
         df_pnl['date'] = pd.to_datetime(df_pnl['date'])
         df_pnl = df_pnl.sort_values('date')
 
-        last_datetest = df_pnl['date'].max()
-        start_datetest = last_datetest - pd.Timedelta(days=test_dates)
-        
-        df_pnl_testset = df_pnl[df_pnl['date'] > start_datetest]
-
-        plot_cumulative_returns(df_pnl_testset)
+        plot_cumulative_returns(df_pnl)
 
         final_roll = df_pnl["pnl_rolling"].sum()
         final_factor= df_pnl["pnl_factor"].sum()
