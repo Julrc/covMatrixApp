@@ -408,11 +408,11 @@ def main():
         # Possibly compute sharpe, etc.
         daily_sharpe_roll =df_pnl["pnl_rolling"].mean() / df_pnl["pnl_rolling"].std()
         annual_sharpe_roll = daily_sharpe_roll * np.sqrt(252)
-        st.write("**Rolling Cov Sharpe**:", round(annual_sharpe_roll, 3))
+        st.write("**Rolling Cov Sharpe**:", round(annual_sharpe_roll), 3)
 
         daily_sharpe_fac = df_pnl["pnl_factor"].mean() / df_pnl["pnl_factor"].std()
         annual_sharpe_fac = daily_sharpe_fac * np.sqrt(252)
-        st.write("**Factor Cov Sharpe:**", round(annual_sharpe_fac), 3))
+        st.write("**Factor Cov Sharpe:**", round(annual_sharpe_fac), 3)
 
 
 if __name__ == "__main__":
