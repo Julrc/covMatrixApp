@@ -402,7 +402,7 @@ def main():
         df_pnl = df_pnl.sort_values('date')
 
         last_datetest = df_pnl['date'].max()
-        start_datetest = last_datetest - pd.TimeDelta(days=test_dates)
+        start_datetest = last_datetest - pd.Timedelta(days=test_dates)
         
         df_pnl_testset = df_pnl[df_pnl['date'] > start_datetest]
 
