@@ -285,7 +285,7 @@ def walk_forward_covariance(model, df_features, tickers):
 def split_train_test(df, test_size=0.15):
     n_test = int(len(df) * test_size)
     df_train = df.iloc[:-n_test]
-    df_test = df.iloc[-n_test:o]
+    df_test = df.iloc[-n_test:]
     
     return df_train, df_test
 
