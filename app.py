@@ -398,7 +398,7 @@ def main():
             input_window=INPUT_WINDOW
         )
 
-        df_pnl['date'] = pd.to_datetime(df['date'])
+        df_pnl['date'] = pd.to_datetime(df_pnl['date'])
         df_pnl = df_pnl.sort_values('date')
 
         last_datetest = df_pnl['date'].max()
