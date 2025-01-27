@@ -326,6 +326,10 @@ def main():
         df_returns = df_data.pct_change().dropna()
         st.write("Data shape (daily returns):", df_returns.shape)
 
+        test_set = df_returns.shape[0]
+        test_percentage = 0.15
+        test_dates = int(np.round(test_set * test_percentage))
+
     except Exception as e:
         st.error(f"Error downloading data: {e}")
         st.stop()
@@ -394,10 +398,15 @@ def main():
             input_window=INPUT_WINDOW
         )
 
-        st.write("Backtest results (first 5 rows):")
-        st.write(df_pnl.head())
+        df_pnl['date'] = pd.to_datetime(df['date'])
+        df_pnl = df_pnl.sort_values('date')
 
-        plot_cumulative_returns(df_pnl)
+        last_datetest = df_pnl['date'].max()
+        start_datetest = last_datetest - pd.TimeDelta(days=test_dates)
+        
+        df_pnl_testset = df_pnl[df_pnl['date'] > start_datetest]
+
+        plot_cumulative_returns(df_pnl_testset)
 
         final_roll = df_pnl["pnl_rolling"].sum()
         final_factor= df_pnl["pnl_factor"].sum()
