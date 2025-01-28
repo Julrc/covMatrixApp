@@ -151,7 +151,6 @@ def min_var_portfolio(cov_matrix):
     cov_matrix: shape (n_assets, n_assets)
     returns: (n_assets,) weight vector
     """
-
     n_assets = cov_matrix.shape[0]
     # Covariance might be signular or ill-conditioned, so add a small ridge
     cov_matrix += np.eye(n_assets) * 1e-6
@@ -435,6 +434,7 @@ def main():
             df_returns=df_test,
             tickers=tickers,
             input_window=INPUT_WINDOW
+            benchmark="rolling_cov"
         )
         plot_and_display(df_pnl, benchmark="rolling_cov")
 
