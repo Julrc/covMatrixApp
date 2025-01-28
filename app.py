@@ -321,7 +321,7 @@ def plot_and_display(df_pnl, benchmark):
 def main():
     st.title("LSTM Model For Portfolio Optimization")
 
-    col1, col2 = st.column(2)
+    col1, col2 = st.columns(2)
 
     with col1:
         # 1) Collect user tickers
