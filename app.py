@@ -433,7 +433,7 @@ def main():
             df_features=df_features_test,
             df_returns=df_test,
             tickers=tickers,
-            input_window=INPUT_WINDOW
+            input_window=INPUT_WINDOW,
             benchmark="rolling_cov"
         )
         plot_and_display(df_pnl, benchmark="rolling_cov")
