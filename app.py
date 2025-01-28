@@ -318,7 +318,22 @@ def plot_and_display(df_pnl, benchmark):
 # ------------------------------
 # 4. Streamlit App
 # ------------------------------
+
+# Ensures these keys exist so we don't get KeyError in tabs.
+if "model" not in st.session_state:
+    st.session_state["model"] = None
+if "df_features_train" not in st.session_state:
+    st.session_state["df_features_train"] = None
+if "df_features_test" not in st.session_state:
+    st.session_state["df_features_test"] = None
+if "df_test" not in st.session_state:
+    st.session_state["df_test"] = None
+if "tickers" not in st.session_state:
+    st.session_state["tickers"] = []
+
+
 def main():
+    # ------------------ Custom CSS ------------------
     st.markdown(
         """
         <style>
@@ -344,78 +359,99 @@ def main():
         unsafe_allow_html=True
     )
     
+    # ------------------ Main Header ------------------
     st.markdown('<div class="header">LSTM Model For Portfolio Optimization</div>', unsafe_allow_html=True)
     
+    # ------------------ Sidebar for Settings ------------------
     st.sidebar.header("Settings")
     
-    # 1. Collect user tickers
+    # 1) Collect user tickers
     default_tickers_str = ",".join(DEFAULT_TICKERS)
     user_tickers_str = st.sidebar.text_input(
         "Enter comma-separated tickers:", 
         default_tickers_str,
-        help="Provide stock ticker symbols separated by commas, e.g., AAPL, MSFT, GOOGL"
+        help="Provide stock ticker symbols separated by commas, e.g. AAPL, MSFT, GOOGL"
     )
     tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
     st.sidebar.markdown(f"**Requested tickers**: {', '.join(tickers)}")
     
-    # 2. Date selection
+    # 2) Date selection
     start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2000-01-01"))
     end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
     
     st.sidebar.markdown("---")
     
-    # Option to load pre-trained model
-    load_model = st.sidebar.button("Load Pre-trained Model")
+    # Button to load pre-trained model
+    load_model_btn = st.sidebar.button("Load Pre-trained Model")
     
+    # ------------------ Tabs ------------------
     tabs = st.tabs(["Data & Model", "Covariance Computation", "Benchmark Comparisons"])
     
+    # ============== TAB 1: Data & Model ==============
     with tabs[0]:
         st.subheader("Data Download and Model Loading")
-        st.write(f"Downloading data from **{start_date}** to **{end_date}** ...")
         
+        # Download the data right away
+        st.write(f"Downloading data from **{start_date}** to **{end_date}** ...")
         try:
-            # Download data
             df_data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
             
+            # Handle single ticker case
             if isinstance(df_data, pd.Series):
                 df_data = df_data.to_frame()
                 
+            # Drop empty columns
             df_data = df_data.dropna(how="all", axis=1)
             valid_tickers = df_data.columns.tolist()
+            
+            # Warn if some tickers have no data
             missing_tickers = set(tickers) - set(valid_tickers)
             if missing_tickers:
                 st.warning(f"Some tickers had no data and were removed: {', '.join(missing_tickers)}")
+            
+            # Filter tickers to only those with data
             tickers = [t for t in tickers if t in valid_tickers]
             if len(tickers) < 2:
                 st.error("Fewer than 2 tickers remain. Cannot proceed.")
-                return
+                st.stop()
+            
             df_data = df_data[tickers].dropna()
             df_returns = df_data.pct_change().dropna()
             st.write("**Data shape (daily returns):**", df_returns.shape)
             
-            # Split data
+            # Split train/test
             df_train, df_test = split_train_test(df_returns, test_size=0.15)
             
-            # Build features
+            # Build feature windows
             df_features_train = build_feature_window(df_train, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
             df_features_test = build_feature_window(df_test, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+            
+            # Store in session_state so other tabs can access
+            st.session_state["tickers"] = tickers
+            st.session_state["df_test"] = df_test
+            st.session_state["df_features_train"] = df_features_train
+            st.session_state["df_features_test"] = df_features_test
             
             st.success("Data downloaded and processed successfully!")
             
         except Exception as e:
             st.error(f"Error downloading data: {e}")
-            return
+            st.stop()
         
-        # Load model
+        # ------------------ Model Loading Section ------------------
         st.markdown("### Model Loading")
-        if load_model:
+        if load_model_btn:
             n_assets = len(tickers)
-            PRETRAINED_ASSETS = 9
+            PRETRAINED_ASSETS = len(DEFAULT_TICKERS)
             if n_assets != PRETRAINED_ASSETS:
                 st.error(f"This pre-trained model expects {PRETRAINED_ASSETS} assets, but you provided {n_assets}.")
-                return
+                st.stop()
+            
+            # Build the correct input dimension
             dummy_input_size = n_assets * 2 if ADD_ROLLING_VOL_FEATURE else n_assets
+            
             try:
+                # Load the model and store in session state
                 model = load_pretrained_model(
                     weights_path=WEIGHTS_PATH,
                     input_size=dummy_input_size,
@@ -425,22 +461,33 @@ def main():
                     num_layers=NUM_LAYERS,
                     dropout_prob=DROPOUT_PROB
                 )
+                st.session_state["model"] = model
                 st.success("Model weights loaded successfully!")
             except Exception as e:
                 st.error(f"Error loading model: {e}")
-                return
+                st.stop()
         else:
-            st.info("Click the button above to load the pre-trained model.")
+            st.info("Click the sidebar button to load the pre-trained model.")
         
-        # Display data preview
+        # Show data preview
         st.markdown("### Data Preview")
         st.dataframe(df_data.head())
     
+    # ============== TAB 2: Covariance Computation ==============
     with tabs[1]:
         st.subheader("Run Walk-Forward Covariance")
-        if 'model' not in locals():
+        
+        # Check if model is loaded
+        if st.session_state["model"] is None:
             st.warning("Please load the model first from the 'Data & Model' tab.")
-            return
+            st.stop()
+        
+        # Retrieve from session_state
+        model = st.session_state["model"]
+        df_features_train = st.session_state["df_features_train"]
+        tickers = st.session_state["tickers"]
+        
+        # Compute Covariance
         if st.button("Compute Covariances"):
             with st.spinner('Computing covariances...'):
                 try:
@@ -454,11 +501,21 @@ def main():
                 except Exception as e:
                     st.error(f"Error computing covariances: {e}")
     
+    # ============== TAB 3: Benchmark Comparisons ==============
     with tabs[2]:
         st.subheader("Choose Benchmark")
-        if 'model' not in locals():
+        
+        # Check if model is loaded
+        if st.session_state["model"] is None:
             st.warning("Please load the model first from the 'Data & Model' tab.")
-            return
+            st.stop()
+        
+        # Retrieve from session_state
+        model = st.session_state["model"]
+        df_features_test = st.session_state["df_features_test"]
+        df_test = st.session_state["df_test"]
+        tickers = st.session_state["tickers"]
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -493,10 +550,14 @@ def main():
                     except Exception as e:
                         st.error(f"Error in Equal-Weighted Portfolio benchmark: {e}")
     
+    # ------------------ Footer ------------------
     st.markdown("""
     ---
-    **About:** This app utilizes an LSTM model to optimize portfolio allocations based on covariance matrices. Input your desired tickers, load the pre-trained model, compute predicted covariances, and compare your model's performance against standard benchmarks.
+    **About:** This app utilizes an LSTM model to optimize portfolio allocations based on 
+    covariance matrices. Input your desired tickers, load the pre-trained model, compute 
+    predicted covariances, and compare your model's performance against standard benchmarks.
     """)
 
+# Standard Streamlit entry point
 if __name__ == "__main__":
     main()
