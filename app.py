@@ -330,127 +330,129 @@ def main():
         tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
         st.write(f"**Requested tickers**: {tickers}")
 
-    # 2) Download data, handle missing tickers
-    end_date = None
-    start_date = "2000-01-01"
-    st.write(f"Downloading data from {start_date} to {end_date} ...")
+        # 2) Download data, handle missing tickers
+        end_date = None
+        start_date = "2000-01-01"
+        st.write(f"Downloading data from {start_date} to {end_date} ...")
 
-    try:
-        # Download
-        df_data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
-        
-        # If df_data is a Series for single ticker, make it a DataFrame
-        if isinstance(df_data, pd.Series):
-            df_data = df_data.to_frame()
+        try:
+            # Download
+            df_data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
+            
+            # If df_data is a Series for single ticker, make it a DataFrame
+            if isinstance(df_data, pd.Series):
+                df_data = df_data.to_frame()
 
-        df_data = df_data.dropna(how="all", axis=1)
-        valid_tickers = df_data.columns.tolist()  # these tickers actually have data
+            df_data = df_data.dropna(how="all", axis=1)
+            valid_tickers = df_data.columns.tolist()  # these tickers actually have data
 
-        # Check for missing
-        missing_tickers = set(tickers) - set(valid_tickers)
-        if missing_tickers:
-            st.warning(f"Some tickers had no data and were removed: {missing_tickers}")
+            # Check for missing
+            missing_tickers = set(tickers) - set(valid_tickers)
+            if missing_tickers:
+                st.warning(f"Some tickers had no data and were removed: {missing_tickers}")
 
-        # Final ticker list is those that remain
-        tickers = [t for t in tickers if t in valid_tickers]
+            # Final ticker list is those that remain
+            tickers = [t for t in tickers if t in valid_tickers]
 
-        if len(tickers) < 2:
-            st.error("Fewer than 2 tickers remain. Cannot proceed.")
+            if len(tickers) < 2:
+                st.error("Fewer than 2 tickers remain. Cannot proceed.")
+                st.stop()
+
+            df_data = df_data[tickers].dropna()
+
+            # Returns
+            df_returns = df_data.pct_change().dropna()
+            st.write("Data shape (daily returns):", df_returns.shape)
+
+            df_train, df_test = split_train_test(df_returns, test_size=0.15)
+
+            df_features_train = build_feature_window(df_train, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+            df_features_test = build_feature_window(df_test, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+            
+
+        except Exception as e:
+            st.error(f"Error downloading data: {e}")
             st.stop()
 
-        df_data = df_data[tickers].dropna()
+        # 3) Prepare to load the model
+        n_assets = len(tickers)
 
-        # Returns
-        df_returns = df_data.pct_change().dropna()
-        st.write("Data shape (daily returns):", df_returns.shape)
+        # If your pre-trained model is strictly for a certain number of assets:
+        PRETRAINED_ASSETS = 9  # e.g. your original training with 9 tickers
+        if n_assets != PRETRAINED_ASSETS:
+            st.error(f"This pre-trained model expects {PRETRAINED_ASSETS} assets, but you provided {n_assets}.")
+            st.stop()
 
-        df_train, df_test = split_train_test(df_returns, test_size=0.15)
+        dummy_input_size = n_assets * 2 if ADD_ROLLING_VOL_FEATURE else n_assets
+        try:
+            model = load_pretrained_model(
+                weights_path=WEIGHTS_PATH,
+                input_size=dummy_input_size,
+                n_assets=n_assets,
+                n_factors=N_FACTORS,
+                hidden_size=HIDDEN_SIZE,
+                num_layers=NUM_LAYERS,
+                dropout_prob=DROPOUT_PROB
+            )
+            st.success("Model weights loaded successfully!")
+        except Exception as e:
+            st.error(f"Error loading model: {e}")
+            st.stop()
 
-        df_features_train = build_feature_window(df_train, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
-        df_features_test = build_feature_window(df_test, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+        # 4) Build the last INPUT_WINDOW features for single-day prediction
+        df_features_full = build_feature_window(df_returns, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
+        if len(df_features_full) < INPUT_WINDOW:
+            st.error(f"Not enough data to build a {INPUT_WINDOW}-day window.")
+            st.stop()
+
+        df_window = df_features_full.iloc[-INPUT_WINDOW:].copy()
+        X_infer = df_to_tensor(df_window)  # shape (1, INPUT_WINDOW, input_size)
+        if X_infer.shape[2] != dummy_input_size:
+            st.error("Feature dimension mismatch. Check rolling-vol logic and input_size.")
+            st.stop()
+
+        st.subheader("Run Walk-Forward Covariance")
+
+        if st.button("Compute Covariances:"):
+            # We'll do a simple walk-forward from day INPUT_WINDOW
+            results = walk_forward_covariance(model, df_features_full, tickers)
+
+            st.write(f"Computed walk-forward covariance for {len(results)} days.")
+
+            if results:
+                last_day_result = results[-1]
+                st.write(f"Latest Predicted covariance** (Date: {last_day_result['date']})")
+                # Plot correlation
+                corr_matrix = last_day_result["Corr"]
+                plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
+
+    with col2:
+
+        st.subheader("Choose Benchmark")
+
+        #Button for rolling Covariance omparison
         
+        if st.button("Rolling Covariance"):
+            df_pnl = walk_forward_compare(
+                model=model,
+                df_features=df_features_test,
+                df_returns=df_test,
+                tickers=tickers,
+                input_window=INPUT_WINDOW,
+                benchmark="rolling_cov"
+            )
+            plot_and_display(df_pnl, benchmark="rolling_cov")
 
-    except Exception as e:
-        st.error(f"Error downloading data: {e}")
-        st.stop()
-
-    # 3) Prepare to load the model
-    n_assets = len(tickers)
-
-    # If your pre-trained model is strictly for a certain number of assets:
-    PRETRAINED_ASSETS = 9  # e.g. your original training with 9 tickers
-    if n_assets != PRETRAINED_ASSETS:
-        st.error(f"This pre-trained model expects {PRETRAINED_ASSETS} assets, but you provided {n_assets}.")
-        st.stop()
-
-    dummy_input_size = n_assets * 2 if ADD_ROLLING_VOL_FEATURE else n_assets
-    try:
-        model = load_pretrained_model(
-            weights_path=WEIGHTS_PATH,
-            input_size=dummy_input_size,
-            n_assets=n_assets,
-            n_factors=N_FACTORS,
-            hidden_size=HIDDEN_SIZE,
-            num_layers=NUM_LAYERS,
-            dropout_prob=DROPOUT_PROB
-        )
-        st.success("Model weights loaded successfully!")
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        st.stop()
-
-    # 4) Build the last INPUT_WINDOW features for single-day prediction
-    df_features_full = build_feature_window(df_returns, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
-    if len(df_features_full) < INPUT_WINDOW:
-        st.error(f"Not enough data to build a {INPUT_WINDOW}-day window.")
-        st.stop()
-
-    df_window = df_features_full.iloc[-INPUT_WINDOW:].copy()
-    X_infer = df_to_tensor(df_window)  # shape (1, INPUT_WINDOW, input_size)
-    if X_infer.shape[2] != dummy_input_size:
-        st.error("Feature dimension mismatch. Check rolling-vol logic and input_size.")
-        st.stop()
-
-    st.subheader("Run Walk-Forward Covariance")
-
-    if st.button("Compute Covariances:"):
-        # We'll do a simple walk-forward from day INPUT_WINDOW
-        results = walk_forward_covariance(model, df_features_full, tickers)
-
-        st.write(f"Computed walk-forward covariance for {len(results)} days.")
-
-        if results:
-            last_day_result = results[-1]
-            st.write(f"Latest Predicted covariance** (Date: {last_day_result['date']})")
-            # Plot correlation
-            corr_matrix = last_day_result["Corr"]
-            plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
-
-    st.subheader("Choose Benchmark")
-
-    #Button for rolling Covariance omparison
-    
-    if st.button("Rolling Covariance"):
-        df_pnl = walk_forward_compare(
-            model=model,
-            df_features=df_features_test,
-            df_returns=df_test,
-            tickers=tickers,
-            input_window=INPUT_WINDOW,
-            benchmark="rolling_cov"
-        )
-        plot_and_display(df_pnl, benchmark="rolling_cov")
-
-    if st.button("Compare with Equal-Weighted Portfolio"):
-        df_pnl=walk_forward_compare(
-            model=model,
-            df_features=df_features_test,
-            df_returns=df_test,
-            tickers=tickers,
-            input_window=INPUT_WINDOW,
-            benchmark="equal_weight"
-        )
-        plot_and_display(df_pnl, benchmark="equal_weight")
+        if st.button("Compare with Equal-Weighted Portfolio"):
+            df_pnl=walk_forward_compare(
+                model=model,
+                df_features=df_features_test,
+                df_returns=df_test,
+                tickers=tickers,
+                input_window=INPUT_WINDOW,
+                benchmark="equal_weight"
+            )
+            plot_and_display(df_pnl, benchmark="equal_weight")
 
 
 if __name__ == "__main__":
