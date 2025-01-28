@@ -319,13 +319,16 @@ def plot_and_display(df_pnl, benchmark):
 # 4. Streamlit App
 # ------------------------------
 def main():
-    st.title("Correlation Prediction App")
+    st.title("LSTM Model For Portfolio Optimization")
 
-    # 1) Collect user tickers
-    default_tickers_str = ",".join(DEFAULT_TICKERS)
-    user_tickers_str = st.text_input("Enter comma-separated tickers:", default_tickers_str)
-    tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
-    st.write(f"**Requested tickers**: {tickers}")
+    col1, col2 = st.column2(2)
+
+    with col1:
+        # 1) Collect user tickers
+        default_tickers_str = ",".join(DEFAULT_TICKERS)
+        user_tickers_str = st.text_input("Enter comma-separated tickers:", default_tickers_str)
+        tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
+        st.write(f"**Requested tickers**: {tickers}")
 
     # 2) Download data, handle missing tickers
     end_date = None
