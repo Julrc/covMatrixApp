@@ -490,7 +490,7 @@ def main():
         # Compute Covariance
         if st.button("Compute Covariances"):
             # We'll do a simple walk-forward from day INPUT_WINDOW
-            results = walk_forward_covariance(model, df_features_full, tickers)
+            results = walk_forward_covariance(model, df_features_train, tickers)
 
             st.write(f"Computed walk-forward covariance for {len(results)} days.")
 
