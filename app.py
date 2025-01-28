@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 # ------------------------------
 INPUT_WINDOW = 40
 ADD_ROLLING_VOL_FEATURE = True
-VOL_WINDOW = 10
+VOL_WINDOW = 20
 N_FACTORS = 2
 HIDDEN_SIZE = 128
 NUM_LAYERS = 2
@@ -165,81 +165,61 @@ def min_var_portfolio(cov_matrix):
     w = numerator / denom
     return w
 
-def walk_forward_compare(model, df_features, df_returns, tickers, input_window):
+def model_predict(model, df_window):
+    X_infer = df_to_tensor(df_window).to(DEVICE)
+    with torch.no_grad():
+        Sigma_pred = model(X_infer)
+    return Sigma_pred[0].cpu().numpy()
+
+def calculate_equal_weighted_returns(df_returns):
+    n_assets = df_returns.shape[1]
+    equal_weights = np.ones(n_assets) / n_assets # Equal weights for all of the assets
+    equal_weighted_returns = df_returns.dot(equal_weights)
+    return equal_weighted_returns
+
+def walk_forward_compare(model, df_features, df_returns, tickers, input_window, benchmark):
     """
-    Walk-forward:
-    - For each day i from [input_window ..end-1], use [i-input_window ..i-1] as window
-    to estimate covariances:
-    1. Rollingcov (Direct from np.cov)
-    2. Factor Cov (our LSTM model)
-    - Then build min-var portfolio for each approach
-    -Evaluate PnL on day i
-    Returns a DataFrame with daily PnL
+    Walk-forward backtest on the test set, comparing:
+    - LSTM Factor Covariance Model
+    - Selected Benchmark (Rolling Covariance or Equal-Weighted Portfolio)
     """
     results = []
     all_dates = df_features.index
     n_assets = len(tickers)
 
-    start_idx = input_window
+    # Calculate equal-weighted portfolio returns (if needed)
+    if benchmark == "equal_weight":
+        equal_weighted_returns = calculate_equal_weighted_returns(df_returns)
+
+    # Start from the first day of the test set
+    start_idx = input_window  # Ensure we have enough data for the first window
 
     for i in range(start_idx, len(df_features) - 1):
-        # We'll predict for day i, then realize the returns on day i + 1
         window_start = i - input_window
         window_end = i
 
-        # 1) Build rolling cov
-        # For rolling-sample cov, just use the raw returns from df_returns
-        # (The last input_window days)
-        rolling_window = df_returns.iloc[window_start:window_end].values
-        roll_cov = np.cov(rolling_window.T, ddof=1) # Shape (n_assets, n_assets)
+        # Rolling covariance (if needed)
+        if benchmark == "rolling_cov":
+            rolling_window = df_returns.iloc[window_start:window_end].values
+            roll_cov = np.cov(rolling_window.T, ddof=1)
+            w_roll = min_var_portfolio(roll_cov)
+            pnl_roll = np.dot(w_roll, df_returns.iloc[i].values)
+            results.append({
+                "date": all_dates[i],
+                "pnl_factor": np.dot(min_var_portfolio(model_predict(model, df_features.iloc[window_start:window_end])), df_returns.iloc[i].values),
+                "pnl_benchmark": pnl_roll
+            })
 
-        # 2) Build Factor Cov
-        factor_window = df_features.iloc[window_start:window_end]
-        X_infer = df_to_tensor(factor_window).to(DEVICE)
-
-        with torch.no_grad():
-            Sigma_pred = model(X_infer) # (1, n_assets, n_assets)
-        Sigma_np = Sigma_pred[0].cpu().numpy()
-
-        # 3) Compute min-var portfolios
-
-        w_roll = min_var_portfolio(roll_cov)
-        w_factor = min_var_portfolio(Sigma_np)
-        
-        # 4) Next day's realized return
-        #next_day_idx = i # Day i+1 in terms of zero-based index inside df_returns
-        next_day_rets = df_returns.iloc[i].values # shape (n_assets,)
-
-        pnl_roll = np.dot(w_roll, next_day_rets)
-        pnl_factor = np.dot(w_factor, next_day_rets)
-
-        results.append({
-            "date": all_dates[i],
-            "pnl_rolling": pnl_roll,
-            "pnl_factor": pnl_factor
-        })
+        # Equal-weighted portfolio (if needed)
+        elif benchmark == "equal_weight":
+            pnl_equal_weight = equal_weighted_returns.iloc[i]
+            results.append({
+                "date": all_dates[i],
+                "pnl_factor": np.dot(min_var_portfolio(model_predict(model, df_features.iloc[window_start:window_end])), df_returns.iloc[i].values),
+                "pnl_benchmark": pnl_equal_weight
+            })
 
     return pd.DataFrame(results)
-
-def plot_cumulative_returns(df_pnl):
-    """
-    df_pnl has columns ["data", "pnl_rolling", "pnl_factor"]
-    Plot the cumulative sum of each strategy
-    """
-
-    df_pnl = df_pnl.copy()
-    df_pnl["cum_roll"] = df_pnl["pnl_rolling"].cumsum()
-    df_pnl["cum_factor"] = df_pnl["pnl_factor"].cumsum()
-
-    plt.figure(figsize=(10,6))
-    plt.plot(df_pnl["date"], df_pnl["cum_roll"], label="Rolling Cov")
-    plt.plot(df_pnl["date"], df_pnl["cum_factor"], label="Factor Cov")
-    plt.title("Cumulative Returns Comparison")
-    plt.legend()
-    plt.xticks(rotation=45, ha='right')
-    st.pyplot(plt)
-    plt.close()
-
 
 def walk_forward_covariance(model, df_features, tickers):
     """
@@ -288,6 +268,53 @@ def split_train_test(df, test_size=0.15):
     df_test = df.iloc[-n_test:]
     
     return df_train, df_test
+
+def calculate_sharpe_ratio(pnl_series, annualization=252):
+    daily_returns = pnl_series.dropna()
+    if len(daily_returns) < 2:
+        return 0.0 # Not enough data
+    
+    mean_return = daily_returns.mean()
+    std_return = daily_returns.std()
+    if std_return ==0:
+        return 0.0 # No division by 0
+    
+    daily_sharpe = mean_return / std_return
+    annualized_sharpe = daily_sharpe * np.sqrt(annualization)
+    return annualized_sharpe
+
+
+def plot_and_display(df_pnl, benchmark):
+
+    # Calculate cumulative
+    df_pnl["cum_factor"] = (1 + df_pnl["pnl_factor"]).cumprod() - 1
+    df_pnl["cum_benchmark"] = (1 + df_pnl["pnl_benchmark"]).cumprod() - 1
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df_pnl["date"], df_pnl["cum_factor"], label="Factor Covariance (LSTM Model)")
+    if benchmark == "rolling_cov":
+        plt.plot(df_pnl["date"], df_pnl["cum_benchmark"], label="Rolling COv")
+    elif benchmark == "equal_weight":
+        plt.plot(df_pnl["date"], df_pnl["cum_benchmark"], label="Equal-Weighted")
+    plt.title("Cumulative Returns Comparison")
+    plt.xlabel("Date")
+    plt.ylabel("Cumulative Return")
+    plt.legend()
+    plt.xticks(rotation=45, ha='right')
+    st.pyplot(plt)
+    plt.close()
+
+    sharpe_factor = calculate_sharpe_ratio(df_pnl["pnl_factor"])
+    sharpe_benchmark = calculate_sharpe_ratio(df_pnl["pnl_benchmark"])
+
+    st.write("**Total PNL - LSTM model", round(df_pnl["cum_factor"].iloc[-1], 4))
+    if benchmark == "rolling_cov":
+        st.write("**Total PNL - Rolling cov", round(df_pnl["cum_benchmark"].iloc[-1],4))
+    elif benchmark == "equal_weight":
+        st.write("**Total PNL - Equal-Weighted", round(df_pnl["cum_benchmark"].iloc[-1], 4))
+    st.write("**LSTM model Sharpe ratio: **", round(sharpe_factor, 3))
+    st.write(f"**{benchmark.replace('_', ' ').title()} Sharpe ratio:**", round(sharpe_benchmark, 3))
+
 
 # ------------------------------
 # 4. Streamlit App
@@ -397,10 +424,11 @@ def main():
             corr_matrix = last_day_result["Corr"]
             plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
 
-    
-    st.subheader("Run Backtest and Compare Factor Cov vs. Rolling Cov")
+    st.subheader("Choose Benchmark")
 
-    if st.button("Run Backtest"):
+    #Button for rolling Covariance omparison
+    
+    if st.button("Rolling Covariance"):
         df_pnl = walk_forward_compare(
             model=model,
             df_features=df_features_test,
@@ -408,26 +436,18 @@ def main():
             tickers=tickers,
             input_window=INPUT_WINDOW
         )
+        plot_and_display(df_pnl, benchmark="rolling_cov")
 
-        df_pnl['date'] = pd.to_datetime(df_pnl['date'])
-        df_pnl = df_pnl.sort_values('date')
-
-        plot_cumulative_returns(df_pnl)
-
-        final_roll = df_pnl["pnl_rolling"].sum()
-        final_factor= df_pnl["pnl_factor"].sum()
-
-        st.write("**Total PNL - Rolling Cov**", round(final_roll, 4))
-        st.write("**Total PNL - Factor Cov**", round(final_factor, 4))
-
-        # Compute sharpe
-        daily_sharpe_roll =df_pnl["pnl_rolling"].mean() / df_pnl["pnl_rolling"].std()
-        annual_sharpe_roll = daily_sharpe_roll * np.sqrt(252)
-        st.write("**Rolling Cov Sharpe**:", round(annual_sharpe_roll, 3))
-
-        daily_sharpe_fac = df_pnl["pnl_factor"].mean() / df_pnl["pnl_factor"].std()
-        annual_sharpe_fac = daily_sharpe_fac * np.sqrt(252)
-        st.write("**Factor Cov Sharpe:**", round(annual_sharpe_fac, 3))
+    if st.button("Compare with Equal-Weighted Portfolio"):
+        df_pnl=walk_forward_compare(
+            model=model,
+            df_features=df_features_test,
+            df_returns=df_test,
+            tickers=tickers,
+            input_window=INPUT_WINDOW,
+            benchmark="equal_weight"
+        )
+        plot_and_display(df_pnl, benchmark="equal_weight")
 
 
 if __name__ == "__main__":
