@@ -442,7 +442,7 @@ def main():
         st.markdown("### Model Loading")
         if load_model_btn:
             n_assets = len(tickers)
-            PRETRAINED_ASSETS = len(DEFAULT_TICKERS)
+            PRETRAINED_ASSETS = 9
             if n_assets != PRETRAINED_ASSETS:
                 st.error(f"This pre-trained model expects {PRETRAINED_ASSETS} assets, but you provided {n_assets}.")
                 st.stop()
@@ -489,18 +489,20 @@ def main():
         
         # Compute Covariance
         if st.button("Compute Covariances"):
-            with st.spinner('Computing covariances...'):
-                try:
-                    results = walk_forward_covariance(model, df_features_train, tickers)
-                    st.success(f"Computed walk-forward covariance for {len(results)} days.")
-                    if results:
-                        last_day_result = results[-1]
-                        st.write(f"**Latest Predicted Covariance** (Date: {last_day_result['date']})")
-                        corr_matrix = last_day_result["Corr"]
-                        plot_heatmap(corr_matrix, tickers, f"Predicted Correlation on {last_day_result['date']}")
-                except Exception as e:
-                    st.error(f"Error computing covariances: {e}")
-    
+            # We'll do a simple walk-forward from day INPUT_WINDOW
+            results = walk_forward_covariance(model, df_features_full, tickers)
+
+            st.write(f"Computed walk-forward covariance for {len(results)} days.")
+
+            if results:
+                last_day_result = results[-1]
+                st.write(f"Latest Predicted covariance** (Date: {last_day_result['date']})")
+                # Plot correlation
+                corr_matrix = last_day_result["Corr"]
+                plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
+
+
+                        
     # ============== TAB 3: Benchmark Comparisons ==============
     with tabs[2]:
         st.subheader("Choose Benchmark")
