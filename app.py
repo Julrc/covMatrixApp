@@ -319,141 +319,184 @@ def plot_and_display(df_pnl, benchmark):
 # 4. Streamlit App
 # ------------------------------
 def main():
-    st.title("LSTM Model For Portfolio Optimization")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # 1) Collect user tickers
-        default_tickers_str = ",".join(DEFAULT_TICKERS)
-        user_tickers_str = st.text_input("Enter comma-separated tickers:", default_tickers_str)
-        tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
-        st.write(f"**Requested tickers**: {tickers}")
-
-        # 2) Download data, handle missing tickers
-        end_date = None
-        start_date = "2000-01-01"
-        st.write(f"Downloading data from {start_date} to {end_date} ...")
-
+    st.markdown(
+        """
+        <style>
+        .header {
+            color: #4B8BBE;
+            font-size: 2.5em;
+            text-align: center;
+            padding: 10px;
+        }
+        .subheader {
+            color: #2E86AB;
+            font-size: 1.8em;
+            padding: 5px 0;
+        }
+        .stButton > button {
+            background-color: #4CAF50;
+            color: white;
+            height: 3em;
+            width: 100%;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    st.markdown('<div class="header">LSTM Model For Portfolio Optimization</div>', unsafe_allow_html=True)
+    
+    st.sidebar.header("Settings")
+    
+    # 1. Collect user tickers
+    default_tickers_str = ",".join(DEFAULT_TICKERS)
+    user_tickers_str = st.sidebar.text_input(
+        "Enter comma-separated tickers:", 
+        default_tickers_str,
+        help="Provide stock ticker symbols separated by commas, e.g., AAPL, MSFT, GOOGL"
+    )
+    tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
+    st.sidebar.markdown(f"**Requested tickers**: {', '.join(tickers)}")
+    
+    # 2. Date selection
+    start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2000-01-01"))
+    end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
+    
+    st.sidebar.markdown("---")
+    
+    # Option to load pre-trained model
+    load_model = st.sidebar.button("Load Pre-trained Model")
+    
+    tabs = st.tabs(["Data & Model", "Covariance Computation", "Benchmark Comparisons"])
+    
+    with tabs[0]:
+        st.subheader("Data Download and Model Loading")
+        st.write(f"Downloading data from **{start_date}** to **{end_date}** ...")
+        
         try:
-            # Download
+            # Download data
             df_data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
             
-            # If df_data is a Series for single ticker, make it a DataFrame
             if isinstance(df_data, pd.Series):
                 df_data = df_data.to_frame()
-
+                
             df_data = df_data.dropna(how="all", axis=1)
-            valid_tickers = df_data.columns.tolist()  # these tickers actually have data
-
-            # Check for missing
+            valid_tickers = df_data.columns.tolist()
             missing_tickers = set(tickers) - set(valid_tickers)
             if missing_tickers:
-                st.warning(f"Some tickers had no data and were removed: {missing_tickers}")
-
-            # Final ticker list is those that remain
+                st.warning(f"Some tickers had no data and were removed: {', '.join(missing_tickers)}")
             tickers = [t for t in tickers if t in valid_tickers]
-
             if len(tickers) < 2:
                 st.error("Fewer than 2 tickers remain. Cannot proceed.")
-                st.stop()
-
+                return
             df_data = df_data[tickers].dropna()
-
-            # Returns
             df_returns = df_data.pct_change().dropna()
-            st.write("Data shape (daily returns):", df_returns.shape)
-
+            st.write("**Data shape (daily returns):**", df_returns.shape)
+            
+            # Split data
             df_train, df_test = split_train_test(df_returns, test_size=0.15)
-
+            
+            # Build features
             df_features_train = build_feature_window(df_train, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
             df_features_test = build_feature_window(df_test, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
             
-
+            st.success("Data downloaded and processed successfully!")
+            
         except Exception as e:
             st.error(f"Error downloading data: {e}")
-            st.stop()
-
-        # 3) Prepare to load the model
-        n_assets = len(tickers)
-
-        # If your pre-trained model is strictly for a certain number of assets:
-        PRETRAINED_ASSETS = 9  # e.g. your original training with 9 tickers
-        if n_assets != PRETRAINED_ASSETS:
-            st.error(f"This pre-trained model expects {PRETRAINED_ASSETS} assets, but you provided {n_assets}.")
-            st.stop()
-
-        dummy_input_size = n_assets * 2 if ADD_ROLLING_VOL_FEATURE else n_assets
-        try:
-            model = load_pretrained_model(
-                weights_path=WEIGHTS_PATH,
-                input_size=dummy_input_size,
-                n_assets=n_assets,
-                n_factors=N_FACTORS,
-                hidden_size=HIDDEN_SIZE,
-                num_layers=NUM_LAYERS,
-                dropout_prob=DROPOUT_PROB
-            )
-            st.success("Model weights loaded successfully!")
-        except Exception as e:
-            st.error(f"Error loading model: {e}")
-            st.stop()
-
-        # 4) Build the last INPUT_WINDOW features for single-day prediction
-        df_features_full = build_feature_window(df_returns, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
-        if len(df_features_full) < INPUT_WINDOW:
-            st.error(f"Not enough data to build a {INPUT_WINDOW}-day window.")
-            st.stop()
-
-        df_window = df_features_full.iloc[-INPUT_WINDOW:].copy()
-        X_infer = df_to_tensor(df_window)  # shape (1, INPUT_WINDOW, input_size)
-        if X_infer.shape[2] != dummy_input_size:
-            st.error("Feature dimension mismatch. Check rolling-vol logic and input_size.")
-            st.stop()
-
-        st.subheader("Run Walk-Forward Covariance")
-
-        if st.button("Compute Covariances:"):
-            # We'll do a simple walk-forward from day INPUT_WINDOW
-            results = walk_forward_covariance(model, df_features_full, tickers)
-
-            st.write(f"Computed walk-forward covariance for {len(results)} days.")
-
-            if results:
-                last_day_result = results[-1]
-                st.write(f"Latest Predicted covariance** (Date: {last_day_result['date']})")
-                # Plot correlation
-                corr_matrix = last_day_result["Corr"]
-                plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
-
-    with col2:
-
-        st.subheader("Choose Benchmark")
-
-        #Button for rolling Covariance omparison
+            return
         
-        if st.button("Rolling Covariance"):
-            df_pnl = walk_forward_compare(
-                model=model,
-                df_features=df_features_test,
-                df_returns=df_test,
-                tickers=tickers,
-                input_window=INPUT_WINDOW,
-                benchmark="rolling_cov"
-            )
-            plot_and_display(df_pnl, benchmark="rolling_cov")
-
-        if st.button("Compare with Equal-Weighted Portfolio"):
-            df_pnl=walk_forward_compare(
-                model=model,
-                df_features=df_features_test,
-                df_returns=df_test,
-                tickers=tickers,
-                input_window=INPUT_WINDOW,
-                benchmark="equal_weight"
-            )
-            plot_and_display(df_pnl, benchmark="equal_weight")
-
+        # Load model
+        st.markdown("### Model Loading")
+        if load_model:
+            n_assets = len(tickers)
+            PRETRAINED_ASSETS = 9
+            if n_assets != PRETRAINED_ASSETS:
+                st.error(f"This pre-trained model expects {PRETRAINED_ASSETS} assets, but you provided {n_assets}.")
+                return
+            dummy_input_size = n_assets * 2 if ADD_ROLLING_VOL_FEATURE else n_assets
+            try:
+                model = load_pretrained_model(
+                    weights_path=WEIGHTS_PATH,
+                    input_size=dummy_input_size,
+                    n_assets=n_assets,
+                    n_factors=N_FACTORS,
+                    hidden_size=HIDDEN_SIZE,
+                    num_layers=NUM_LAYERS,
+                    dropout_prob=DROPOUT_PROB
+                )
+                st.success("Model weights loaded successfully!")
+            except Exception as e:
+                st.error(f"Error loading model: {e}")
+                return
+        else:
+            st.info("Click the button above to load the pre-trained model.")
+        
+        # Display data preview
+        st.markdown("### Data Preview")
+        st.dataframe(df_data.head())
+    
+    with tabs[1]:
+        st.subheader("Run Walk-Forward Covariance")
+        if 'model' not in locals():
+            st.warning("Please load the model first from the 'Data & Model' tab.")
+            return
+        if st.button("Compute Covariances"):
+            with st.spinner('Computing covariances...'):
+                try:
+                    results = walk_forward_covariance(model, df_features_train, tickers)
+                    st.success(f"Computed walk-forward covariance for {len(results)} days.")
+                    if results:
+                        last_day_result = results[-1]
+                        st.write(f"**Latest Predicted Covariance** (Date: {last_day_result['date']})")
+                        corr_matrix = last_day_result["Corr"]
+                        plot_heatmap(corr_matrix, tickers, f"Predicted Correlation on {last_day_result['date']}")
+                except Exception as e:
+                    st.error(f"Error computing covariances: {e}")
+    
+    with tabs[2]:
+        st.subheader("Choose Benchmark")
+        if 'model' not in locals():
+            st.warning("Please load the model first from the 'Data & Model' tab.")
+            return
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Rolling Covariance"):
+                with st.spinner('Running Rolling Covariance benchmark...'):
+                    try:
+                        df_pnl = walk_forward_compare(
+                            model=model,
+                            df_features=df_features_test,
+                            df_returns=df_test,
+                            tickers=tickers,
+                            input_window=INPUT_WINDOW,
+                            benchmark="rolling_cov"
+                        )
+                        plot_and_display(df_pnl, benchmark="Rolling Covariance")
+                    except Exception as e:
+                        st.error(f"Error in Rolling Covariance benchmark: {e}")
+        
+        with col2:
+            if st.button("Equal-Weighted Portfolio"):
+                with st.spinner('Running Equal-Weighted Portfolio benchmark...'):
+                    try:
+                        df_pnl = walk_forward_compare(
+                            model=model,
+                            df_features=df_features_test,
+                            df_returns=df_test,
+                            tickers=tickers,
+                            input_window=INPUT_WINDOW,
+                            benchmark="equal_weight"
+                        )
+                        plot_and_display(df_pnl, benchmark="Equal-Weighted Portfolio")
+                    except Exception as e:
+                        st.error(f"Error in Equal-Weighted Portfolio benchmark: {e}")
+    
+    st.markdown("""
+    ---
+    **About:** This app utilizes an LSTM model to optimize portfolio allocations based on covariance matrices. Input your desired tickers, load the pre-trained model, compute predicted covariances, and compare your model's performance against standard benchmarks.
+    """)
 
 if __name__ == "__main__":
     main()
