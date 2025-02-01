@@ -1,4 +1,4 @@
-import streamlit as st
+. import streamlit as st
 import torch
 import torch.nn as nn
 import numpy as np
@@ -8,9 +8,7 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-# ------------------------------
-# 1. Global Settings
-# ------------------------------
+
 INPUT_WINDOW = 40
 ADD_ROLLING_VOL_FEATURE = True
 VOL_WINDOW = 20
@@ -26,9 +24,8 @@ np.random.seed(42)
 WEIGHTS_PATH = "factor_model_weights.pth"  # must exist (pre-trained)
 DEFAULT_TICKERS = ["NVDA", "AAPL", "MSFT", "AMZN", "2222.SR", "META", "TSLA", "TSM", "AVGO"]
 
-# ------------------------------
-# 2. FactorCovModel Definition
-# ------------------------------
+# Factor model
+
 class FactorCovModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, n_assets, n_factors, dropout_prob):
         super().__init__()
@@ -58,7 +55,7 @@ class FactorCovModel(nn.Module):
         last_out = self.dropout(last_out)
         raw_out = self.fc(last_out)    # shape: (batch_size, out_dim)
 
-        # Decompose raw_out into loadings, factor_log_var, idio_log_var
+        # Decompose raw_out
         idx = 0
         loadings_size   = self.n_assets * self.n_factors
         factor_var_size = self.n_factors
@@ -78,19 +75,18 @@ class FactorCovModel(nn.Module):
 
         Sigma_batch = []
         for b in range(batch_size):
-            Lambda = loadings[b]                    # (n_assets, n_factors)
+            Lambda = loadings[b]           # (n_assets, n_factors)
             F_diag = torch.diag(factor_vars[b])     # (n_factors, n_factors)
             factor_cov = Lambda @ F_diag @ Lambda.T
             idio_cov = torch.diag(idio_vars[b])
             Sigma_b = factor_cov + idio_cov
             Sigma_batch.append(Sigma_b)
 
-        Sigma_pred = torch.stack(Sigma_batch, dim=0)  # (batch_size, n_assets, n_assets)
+        Sigma_pred = torch.stack(Sigma_batch, dim=0) 
         return Sigma_pred
 
-# ------------------------------
-# 3. Utility Functions
-# ------------------------------
+# Utility functions
+
 def load_pretrained_model(weights_path, input_size, n_assets, n_factors, hidden_size, num_layers, dropout_prob):
     model = FactorCovModel(
         input_size=input_size,
@@ -119,9 +115,7 @@ def plot_heatmap(matrix, labels, title):
 def build_feature_window(df_returns, add_rolling_vol, vol_window):
     """
     Given a df of daily returns, optionally compute rolling vol and
-    return a new DataFrame with either:
-      - columns = returns only
-      - columns = returns + rolling_vol
+    return a new DataFrame 
     """
     if add_rolling_vol:
         df_vol = df_returns.rolling(window=vol_window, min_periods=1).std().fillna(0.0)
@@ -135,7 +129,7 @@ def build_feature_window(df_returns, add_rolling_vol, vol_window):
 
 def df_to_tensor(df_window):
     """
-    Convert the last INPUT_WINDOW rows of a DataFrame into a single input tensor: (1, INPUT_WINDOW, input_size)
+    Convert the last INPUT_WINDOW rows of a DataFrame into a single input tensor
     """
     window_data = df_window.values  # shape: (INPUT_WINDOW, input_size)
     X_tensor = torch.tensor(window_data, dtype=torch.float32).unsqueeze(0)
@@ -147,9 +141,6 @@ def min_var_portfolio(cov_matrix):
     No short-sale constraints here (weights can be negative)
 
     min w^T Sigma w, subject to sum(w) = 1
-
-    cov_matrix: shape (n_assets, n_assets)
-    returns: (n_assets,) weight vector
     """
     n_assets = cov_matrix.shape[0]
     # Covariance might be signular or ill-conditioned, so add a small ridge
@@ -178,9 +169,7 @@ def calculate_equal_weighted_returns(df_returns):
 
 def walk_forward_compare(model, df_features, df_returns, tickers, input_window, benchmark):
     """
-    Walk-forward backtest on the test set, comparing:
-    - LSTM Factor Covariance Model
-    - Selected Benchmark (Rolling Covariance or Equal-Weighted Portfolio)
+    Walk-forward backtest on the test
     """
     results = []
     all_dates = df_features.index
@@ -223,9 +212,6 @@ def walk_forward_compare(model, df_features, df_returns, tickers, input_window, 
 def walk_forward_covariance(model, df_features, tickers):
     """
     For each day i from input_window to the endo f df_features
-    Use the last input_window rows up to day i-1
-    Predict covariacne for day i
-    Compare or store it
     """
     results = []
     all_dates = df_features.index
@@ -315,11 +301,9 @@ def plot_and_display(df_pnl, benchmark):
     st.write(f"**{benchmark.replace('_', ' ').title()} Sharpe ratio:**", round(sharpe_benchmark, 3))
 
 
-# ------------------------------
-# 4. Streamlit App
-# ------------------------------
+# Streamlit
 
-# Ensures these keys exist so we don't get KeyError in tabs.
+# Ensures these keys exist so no KeyError
 if "model" not in st.session_state:
     st.session_state["model"] = None
 if "df_features_train" not in st.session_state:
@@ -333,7 +317,6 @@ if "tickers" not in st.session_state:
 
 
 def main():
-    # ------------------ Custom CSS ------------------
     st.markdown(
         """
         <style>
@@ -359,13 +342,11 @@ def main():
         unsafe_allow_html=True
     )
     
-    # ------------------ Main Header ------------------
     st.markdown('<div class="header">LSTM Model For Portfolio Optimization</div>', unsafe_allow_html=True)
     
-    # ------------------ Sidebar for Settings ------------------
     st.sidebar.header("Settings")
     
-    # 1) Collect user tickers
+    # Collect tickers
     default_tickers_str = ",".join(DEFAULT_TICKERS)
     user_tickers_str = st.sidebar.text_input(
         "Enter comma-separated tickers:", 
@@ -375,19 +356,16 @@ def main():
     tickers = [t.strip().upper() for t in user_tickers_str.split(",") if t.strip()]
     st.sidebar.markdown(f"**Requested tickers**: {', '.join(tickers)}")
     
-    # 2) Date selection
     start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2000-01-01"))
     end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
     
     st.sidebar.markdown("---")
     
-    # Button to load pre-trained model
+    # Load model
     load_model_btn = st.sidebar.button("Load Pre-trained Model")
     
-    # ------------------ Tabs ------------------
     tabs = st.tabs(["Data & Model", "Covariance Computation", "Benchmark Comparisons"])
     
-    # ============== TAB 1: Data & Model ==============
     with tabs[0]:
         st.subheader("Data Download and Model Loading")
         
@@ -400,16 +378,13 @@ def main():
             if isinstance(df_data, pd.Series):
                 df_data = df_data.to_frame()
                 
-            # Drop empty columns
             df_data = df_data.dropna(how="all", axis=1)
             valid_tickers = df_data.columns.tolist()
             
-            # Warn if some tickers have no data
             missing_tickers = set(tickers) - set(valid_tickers)
             if missing_tickers:
                 st.warning(f"Some tickers had no data and were removed: {', '.join(missing_tickers)}")
             
-            # Filter tickers to only those with data
             tickers = [t for t in tickers if t in valid_tickers]
             if len(tickers) < 2:
                 st.error("Fewer than 2 tickers remain. Cannot proceed.")
@@ -422,7 +397,6 @@ def main():
             # Split train/test
             df_train, df_test = split_train_test(df_returns, test_size=0.15)
             
-            # Build feature windows
             df_features_train = build_feature_window(df_train, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
             df_features_test = build_feature_window(df_test, ADD_ROLLING_VOL_FEATURE, VOL_WINDOW)
             
@@ -438,7 +412,6 @@ def main():
             st.error(f"Error downloading data: {e}")
             st.stop()
         
-        # ------------------ Model Loading Section ------------------
         st.markdown("### Model Loading")
         if load_model_btn:
             n_assets = len(tickers)
@@ -451,7 +424,6 @@ def main():
             dummy_input_size = n_assets * 2 if ADD_ROLLING_VOL_FEATURE else n_assets
             
             try:
-                # Load the model and store in session state
                 model = load_pretrained_model(
                     weights_path=WEIGHTS_PATH,
                     input_size=dummy_input_size,
@@ -469,15 +441,12 @@ def main():
         else:
             st.info("Click the sidebar button to load the pre-trained model.")
         
-        # Show data preview
         st.markdown("### Data Preview")
         st.dataframe(df_data.head())
     
-    # ============== TAB 2: Covariance Computation ==============
     with tabs[1]:
         st.subheader("Run Walk-Forward Covariance")
         
-        # Check if model is loaded
         if st.session_state["model"] is None:
             st.warning("Please load the model first from the 'Data & Model' tab.")
             st.stop()
@@ -489,7 +458,6 @@ def main():
         
         # Compute Covariance
         if st.button("Compute Covariances"):
-            # We'll do a simple walk-forward from day INPUT_WINDOW
             results = walk_forward_covariance(model, df_features_train, tickers)
 
             st.write(f"Computed walk-forward covariance for {len(results)} days.")
@@ -497,17 +465,14 @@ def main():
             if results:
                 last_day_result = results[-1]
                 st.write(f"Latest Predicted covariance** (Date: {last_day_result['date']})")
-                # Plot correlation
                 corr_matrix = last_day_result["Corr"]
                 plot_heatmap(corr_matrix,tickers,f"Predicted Correlation on {last_day_result['date']}")
 
 
                         
-    # ============== TAB 3: Benchmark Comparisons ==============
     with tabs[2]:
         st.subheader("Choose Benchmark")
         
-        # Check if model is loaded
         if st.session_state["model"] is None:
             st.warning("Please load the model first from the 'Data & Model' tab.")
             st.stop()
@@ -552,7 +517,6 @@ def main():
                     except Exception as e:
                         st.error(f"Error in Equal-Weighted Portfolio benchmark: {e}")
     
-    # ------------------ Footer ------------------
     st.markdown("""
     ---
     **About:** This app utilizes an LSTM model to optimize portfolio allocations based on 
@@ -560,6 +524,5 @@ def main():
     predicted covariances, and compare your model's performance against standard benchmarks.
     """)
 
-# Standard Streamlit entry point
 if __name__ == "__main__":
     main()
