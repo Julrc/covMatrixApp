@@ -209,7 +209,7 @@ def walk_forward_compare(model, df_features, df_returns, tickers, input_window, 
 
     return pd.DataFrame(results)
 
-@st.cache_data
+@st.cache_resource
 def walk_forward_covariance(model, df_features, tickers):
     """
     For each day i from input_window to the endo f df_features
