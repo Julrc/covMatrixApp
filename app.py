@@ -456,7 +456,7 @@ def main():
         tickers = st.session_state["tickers"]
         
         # Compute Covariance
-        if st.button("Compute Covariances"):
+        if st.button("Compute Covariances (May take some time)"):
             results = walk_forward_covariance(model, df_features_train, tickers)
 
             st.write(f"Computed walk-forward covariance for {len(results)} days.")
