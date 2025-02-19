@@ -382,11 +382,11 @@ def main():
             
             missing_tickers = set(tickers) - set(valid_tickers)
             if missing_tickers:
-                st.warning(f"Some tickers had no data and were removed: {', '.join(missing_tickers)}")
+                st.warning(f"Some tickers had no data and were removed, yfinance error: {', '.join(missing_tickers)}")
             
             tickers = [t for t in tickers if t in valid_tickers]
             if len(tickers) < 2:
-                st.error("Fewer than 2 tickers remain. Cannot proceed.")
+                st.error("Fewer than 2 tickers remain. Cantproceed.")
                 st.stop()
             
             df_data = df_data[tickers].dropna()
