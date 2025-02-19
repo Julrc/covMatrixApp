@@ -516,7 +516,10 @@ def main():
                     except Exception as e:
                         st.error(f"Error in Equal-Weighted Portfolio benchmark: {e}")
     
-    st.markdown("""
+    st.markdown("""This app utilizes an LSTM model to optimize portfolio allocations based on 
+    covariance matrices. Input your desired tickers, load the pre-trained model, compute 
+    predicted covariances, and compare your model's performance against standard benchmarks.""")
+
 
 
 if __name__ == "__main__":
