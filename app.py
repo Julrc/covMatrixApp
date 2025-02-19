@@ -138,7 +138,6 @@ def df_to_tensor(df_window):
 def min_var_portfolio(cov_matrix):
     """
     Solve for ht eminimum variance portfolio subject to sum of weights = 1.
-    No short-sale constraints here (weights can be negative)
 
     min w^T Sigma w, subject to sum(w) = 1
     """
