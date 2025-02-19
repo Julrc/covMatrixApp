@@ -371,7 +371,7 @@ def main():
         # Download the data right away
         st.write(f"Downloading data from **{start_date}** to **{end_date}** ...")
         try:
-            df_data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
+            df_data = yf.download(tickers, start=start_date, end=end_date)["Close"]
             
             # Handle single ticker case
             if isinstance(df_data, pd.Series):
